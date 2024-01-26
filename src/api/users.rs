@@ -1,9 +1,13 @@
-use actix_web::{
-    error::*,
-    web::{self, Data, Path, Query},
-    HttpResponse, Responder,
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, Query, State},
+    response::IntoResponse,
+    Json,
 };
 use chrono::{Duration, Local};
+use http::StatusCode;
+use serde::Serialize;
 use serde_derive::Deserialize;
 
 use crate::{
@@ -21,12 +25,11 @@ pub struct UserAuthentication {
     pub password: String,
 }
 
-#[get("/users/@me")]
-pub async fn my_profile(user: UserIdentity) -> Result<impl Responder, TimeError> {
-    Ok(web::Json(user))
+pub async fn my_profile(user: UserIdentity) -> Result<impl IntoResponse, TimeError> {
+    Ok(Json(user))
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct ListLeaderboard {
     pub name: String,
     pub member_count: i32,
@@ -35,25 +38,23 @@ pub struct ListLeaderboard {
     pub me: PrivateLeaderboardMember,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct MinimalLeaderboard {
     pub name: String,
     pub member_count: i32,
 }
 
-#[get("/users/@me/leaderboards")]
 pub async fn my_leaderboards(
     user: UserId,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
-    Ok(web::Json(db.get_user_leaderboards(user.id).await?))
+) -> Result<impl IntoResponse, TimeError> {
+    Ok(Json(db.get_user_leaderboards(user.id).await?))
 }
 
-#[delete("/users/@me/delete")]
 pub async fn delete_user(
     db: DatabaseWrapper,
-    user: web::Json<UserAuthentication>,
-) -> Result<impl Responder, TimeError> {
+    user: Json<UserAuthentication>,
+) -> Result<impl IntoResponse, TimeError> {
     if let Some(user) = db
         .verify_user_password(&user.username, &user.password)
         .await?
@@ -61,22 +62,21 @@ pub async fn delete_user(
         db.delete_user(user.id).await?;
     }
 
-    Ok(HttpResponse::Ok().finish())
+    Ok(StatusCode::OK)
 }
 
-#[get("/users/{username}/activity/current")]
 pub async fn get_current_activity(
-    path: Path<(String,)>,
+    Path(name): Path<String>,
     opt_user: UserIdentityOptional,
     db: DatabaseWrapper,
-    heartbeats: Data<HeartBeatMemoryStore>,
-) -> Result<impl Responder, TimeError> {
+    State(heartbeats): State<Arc<HeartBeatMemoryStore>>,
+) -> Result<impl IntoResponse, TimeError> {
     let target_user = if let Some(user) = opt_user.identity {
-        if path.0 == "@me" {
+        if name == "@me" {
             user.id
         } else {
             let target_user = db
-                .get_user_by_name(path.0.clone())
+                .get_user_by_name(name.clone())
                 .await
                 .map_err(|_| TimeError::UserNotFound)?;
 
@@ -91,7 +91,7 @@ pub async fn get_current_activity(
         }
     } else {
         let target_user = db
-            .get_user_by_name(path.0.clone())
+            .get_user_by_name(name.clone())
             .await
             .map_err(|_| TimeError::UserNotFound)?;
 
@@ -109,8 +109,7 @@ pub async fn get_current_activity(
             let curtime = Local::now().naive_local();
             if curtime.signed_duration_since(start + duration) > Duration::seconds(900) {
                 db.add_activity(target_user, inner_heartbeat, start, duration)
-                    .await
-                    .map_err(ErrorInternalServerError)?;
+                    .await?;
 
                 heartbeats.remove(&target_user);
                 Err(TimeError::NotActive)
@@ -120,40 +119,39 @@ pub async fn get_current_activity(
                     duration: duration.num_seconds(),
                     heartbeat: inner_heartbeat,
                 };
-                Ok(web::Json(Some(current_heartbeat)))
+                Ok(Json(Some(current_heartbeat)))
             }
         }
         None => Err(TimeError::NotActive),
     }
 }
 
-#[get("/users/{username}/activity/data")]
 pub async fn get_activities(
     Query(data): Query<DataRequest>,
-    path: Path<(String,)>,
+    Path(name): Path<String>,
     opt_user: UserIdentityOptional,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+) -> Result<impl IntoResponse, TimeError> {
     let Some(user) = opt_user.identity else {
         let target_user = db
-            .get_user_by_name(path.0.clone())
+            .get_user_by_name(name.clone())
             .await
             .map_err(|_| TimeError::UserNotFound)?;
 
         if target_user.is_public {
-            return Ok(web::Json(db.get_activity(data, target_user.id).await?));
+            return Ok(Json(db.get_activity(data, target_user.id).await?));
         } else {
             return Err(TimeError::UserNotFound);
         };
     };
 
-    let data = if path.0 == "@me" {
+    let data = if name == "@me" {
         db.get_activity(data, user.id).await?
     } else {
         //FIXME: This is technically not required when the username equals the username of the
         //authenticated user
         let target_user = db
-            .get_user_by_name(path.0.clone())
+            .get_user_by_name(name.clone())
             .await
             .map_err(|_| TimeError::UserNotFound)?;
 
@@ -167,21 +165,20 @@ pub async fn get_activities(
         }
     };
 
-    Ok(web::Json(data))
+    Ok(Json(data))
 }
 
-#[get("/users/{username}/activity/summary")]
 pub async fn get_activity_summary(
-    path: Path<(String,)>,
+    Path(path): Path<String>,
     opt_user: UserIdentityOptional,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+) -> Result<impl IntoResponse, TimeError> {
     let data = if let Some(user) = opt_user.identity {
-        if path.0 == "@me" {
+        if path == "@me" {
             db.get_all_activity(user.id).await?
         } else {
             let target_user = db
-                .get_user_by_name(path.0.clone())
+                .get_user_by_name(path)
                 .await
                 .map_err(|_| TimeError::UserNotFound)?;
 
@@ -196,7 +193,7 @@ pub async fn get_activity_summary(
         }
     } else {
         let target_user = db
-            .get_user_by_name(path.0.clone())
+            .get_user_by_name(path)
             .await
             .map_err(|_| TimeError::UserNotFound)?;
 
@@ -236,5 +233,5 @@ pub async fn get_activity_summary(
         },
     });
 
-    Ok(web::Json(langs))
+    Ok(Json(langs))
 }

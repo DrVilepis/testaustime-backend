@@ -1,8 +1,8 @@
-use actix_web::{
-    error::{BlockingError, ResponseError},
-    http::{header::ContentType, StatusCode},
-    HttpResponse,
+use axum::{
+    response::{IntoResponse, Response},
+    Json,
 };
+use http::StatusCode;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -14,7 +14,7 @@ pub enum TimeError {
     #[error("Internal server error")]
     DieselConnectionError(#[from] diesel::result::ConnectionError),
     #[error(transparent)]
-    ActixError(#[from] actix_web::error::Error),
+    ActixError(#[from] axum::Error),
     #[error("User exists")]
     UserExists,
     #[error("User not found")]
@@ -31,8 +31,6 @@ pub enum TimeError {
     UnauthroizedSecuredAccess,
     #[error("Invalid username or password")]
     InvalidCredentials,
-    #[error(transparent)]
-    BlockingError(#[from] BlockingError),
     #[error("{0}")]
     InvalidLength(String),
     #[error("Username has to contain characters from [a-zA-Z0-9_] and has to be between 2 and 32 characters")]
@@ -59,12 +57,10 @@ pub enum TimeError {
     NotActive,
 }
 
-unsafe impl Send for TimeError {}
-
-impl ResponseError for TimeError {
-    fn status_code(&self) -> StatusCode {
+impl IntoResponse for TimeError {
+    fn into_response(self) -> Response {
         error!("{}", self);
-        match self {
+        let status_code = match self {
             TimeError::UserNotFound | TimeError::LeaderboardNotFound | TimeError::NotActive => {
                 StatusCode::NOT_FOUND
             }
@@ -84,12 +80,10 @@ impl ResponseError for TimeError {
             | TimeError::UnauthroizedSecuredAccess => StatusCode::UNAUTHORIZED,
             TimeError::TooManyRegisters => StatusCode::TOO_MANY_REQUESTS,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
+        };
 
-    fn error_response(&self) -> HttpResponse {
-        HttpResponse::build(self.status_code())
-            .insert_header(ContentType::json())
-            .body(json!({ "error": self.to_string() }).to_string())
+        let body = Json(json!({"error": self.to_string()}));
+
+        (status_code, body).into_response()
     }
 }

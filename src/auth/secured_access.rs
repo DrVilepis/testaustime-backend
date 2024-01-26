@@ -16,6 +16,7 @@ pub struct SecuredAccessTokenInstance {
     pub expires: Instant,
 }
 
+#[derive(Default)]
 pub struct SecuredAccessTokenStorage {
     inner: DashMap<String, SecuredAccessTokenInstance>,
 }

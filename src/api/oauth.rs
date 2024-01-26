@@ -1,18 +1,17 @@
 use std::{collections::HashMap, sync::LazyLock};
 
-use actix_web::{
-    cookie::Cookie,
-    error::*,
-    web::{Data, Query},
-    HttpResponse, Responder,
+use axum::{
+    extract::Query,
+    response::{IntoResponse, Redirect},
 };
-use awc::Client;
+use axum_extra::extract::{cookie::Cookie, CookieJar};
+use reqwest::Client;
 use serde_derive::Deserialize;
 
 use crate::{database::DatabaseWrapper, error::TimeError};
 
 #[derive(Deserialize)]
-struct TokenExchangeRequest {
+pub struct TokenExchangeRequest {
     code: String,
 }
 
@@ -47,25 +46,28 @@ static CLIENT_INFO: LazyLock<ClientInfo> = LazyLock::new(|| {
         .expect("Invalid Toml in settings.toml")
 });
 
-#[get("/auth/callback")]
-async fn callback(
-    request: Query<TokenExchangeRequest>,
-    client: Data<Client>,
+pub async fn callback(
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+    jar: CookieJar,
+    request: Query<TokenExchangeRequest>,
+) -> Result<impl IntoResponse, TimeError> {
     if request.code.chars().any(|c| !c.is_alphanumeric()) {
         return Err(TimeError::BadCode);
     }
 
+    // Maybe store in state?
+    let client = Client::new();
+
     let res = client
         .post("http://id.testausserveri.fi/api/v1/token")
-        .insert_header(("content-type", "application/x-www-form-urlencoded"))
-        .send_form(&HashMap::from([
+        .header("content-type", "application/x-www-form-urlencoded")
+        .form(&HashMap::from([
             ("code", &request.code),
             ("redirect_uri", &CLIENT_INFO.redirect_uri),
             ("client_id", &CLIENT_INFO.id),
             ("client_secret", &CLIENT_INFO.secret),
         ]))
+        .send()
         .await
         .unwrap()
         .json::<TokenResponse>()
@@ -74,7 +76,7 @@ async fn callback(
 
     let res = client
         .get("http://id.testausserveri.fi/api/v1/me")
-        .insert_header(("Authorization", format!("Bearer {}", res.token)))
+        .header("Authorization", format!("Bearer {}", res.token))
         .send()
         .await
         .unwrap()
@@ -86,14 +88,13 @@ async fn callback(
         .testausid_login(res.id, res.name, res.platform.id)
         .await?;
 
-    Ok(HttpResponse::PermanentRedirect()
-        .insert_header(("location", "https://testaustime.fi/oauth_redirect"))
-        .cookie(
-            Cookie::build("testaustime_token", token)
+    Ok((
+        jar.add(
+            Cookie::build(("testaustime_token", token))
                 .domain("testaustime.fi")
                 .path("/")
-                .secure(true)
-                .finish(),
-        )
-        .finish())
+                .secure(true),
+        ),
+        Redirect::permanent("https://testaustime.fi/oauth_redirect"),
+    ))
 }

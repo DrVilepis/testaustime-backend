@@ -1,11 +1,15 @@
-use std::{future::Future, pin::Pin};
-
-use actix_web::{
-    dev::{ConnectionInfo, Payload},
-    error::*,
-    web::{Data, Json},
-    FromRequest, HttpMessage, HttpRequest, HttpResponse, Responder,
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
 };
+
+use axum::{
+    async_trait,
+    extract::{ConnectInfo, FromRequestParts, State},
+    response::IntoResponse,
+    Json,
+};
+use http::{header::FORWARDED, request::Parts, HeaderMap, StatusCode};
 
 use crate::{
     auth::{secured_access::SecuredAccessTokenStorage, Authentication},
@@ -16,35 +20,33 @@ use crate::{
     RegisterLimiter,
 };
 
-impl FromRequest for UserId {
-    type Error = TimeError;
-    type Future = Pin<Box<dyn Future<Output = actix_web::Result<Self, Self::Error>>>>;
+#[async_trait]
+impl<S> FromRequestParts<S> for UserId {
+    type Rejection = TimeError;
 
-    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let auth = req.extensions().get::<Authentication>().cloned().unwrap();
-        Box::pin(async move {
-            if let Authentication::AuthToken(user) = auth {
-                Ok(UserId { id: user.id })
-            } else {
-                Err(TimeError::Unauthorized)
-            }
-        })
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        let auth = parts.extensions.get::<Authentication>().cloned().unwrap();
+
+        if let Authentication::AuthToken(user) = auth {
+            Ok(UserId { id: user.id })
+        } else {
+            Err(TimeError::Unauthorized)
+        }
     }
 }
 
-impl FromRequest for UserIdentity {
-    type Error = TimeError;
-    type Future = Pin<Box<dyn Future<Output = actix_web::Result<Self, Self::Error>>>>;
+#[async_trait]
+impl<S> FromRequestParts<S> for UserIdentity {
+    type Rejection = TimeError;
 
-    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let auth = req.extensions().get::<Authentication>().cloned().unwrap();
-        Box::pin(async move {
-            if let Authentication::AuthToken(user) = auth {
-                Ok(user)
-            } else {
-                Err(TimeError::Unauthorized)
-            }
-        })
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let auth = parts.extensions.get::<Authentication>().cloned().unwrap();
+
+        if let Authentication::AuthToken(user) = auth {
+            Ok(user)
+        } else {
+            Err(TimeError::Unauthorized)
+        }
     }
 }
 
@@ -52,19 +54,18 @@ pub struct SecuredUserIdentity {
     pub identity: UserIdentity,
 }
 
-impl FromRequest for SecuredUserIdentity {
-    type Error = TimeError;
-    type Future = Pin<Box<dyn Future<Output = actix_web::Result<Self, Self::Error>>>>;
+#[async_trait]
+impl<S> FromRequestParts<S> for SecuredUserIdentity {
+    type Rejection = TimeError;
 
-    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let auth = req.extensions().get::<Authentication>().cloned().unwrap();
-        Box::pin(async move {
-            if let Authentication::SecuredAuthToken(user) = auth {
-                Ok(SecuredUserIdentity { identity: user })
-            } else {
-                Err(TimeError::UnauthroizedSecuredAccess)
-            }
-        })
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let auth = parts.extensions.get::<Authentication>().cloned().unwrap();
+
+        if let Authentication::SecuredAuthToken(user) = auth {
+            Ok(SecuredUserIdentity { identity: user })
+        } else {
+            Err(TimeError::UnauthroizedSecuredAccess)
+        }
     }
 }
 
@@ -72,29 +73,30 @@ pub struct UserIdentityOptional {
     pub identity: Option<UserIdentity>,
 }
 
-impl FromRequest for UserIdentityOptional {
-    type Error = TimeError;
-    type Future = Pin<Box<dyn Future<Output = actix_web::Result<Self, Self::Error>>>>;
+#[async_trait]
+impl<S> FromRequestParts<S> for UserIdentityOptional
+where
+    S: Send + Sync,
+{
+    type Rejection = TimeError;
 
-    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let auth = req.extensions().get::<Authentication>().cloned().unwrap();
-        Box::pin(async move {
-            if let Authentication::AuthToken(user) = auth {
-                Ok(UserIdentityOptional {
-                    identity: Some(user),
-                })
-            } else {
-                Ok(UserIdentityOptional { identity: None })
-            }
-        })
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        let auth = parts.extensions.get::<Authentication>().cloned().unwrap();
+
+        if let Authentication::AuthToken(user) = auth {
+            Ok(UserIdentityOptional {
+                identity: Some(user),
+            })
+        } else {
+            Ok(UserIdentityOptional { identity: None })
+        }
     }
 }
 
-#[post("/auth/login")]
 pub async fn login(
-    data: Json<RegisterRequest>,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+    data: Json<RegisterRequest>,
+) -> Result<impl IntoResponse, TimeError> {
     if data.password.len() > 128 {
         return Err(TimeError::InvalidLength(
             "Password cannot be longer than 128 characters".to_string(),
@@ -109,12 +111,11 @@ pub async fn login(
     }
 }
 
-#[post("/auth/securedaccess")]
 pub async fn get_secured_access_token(
-    data: Json<RegisterRequest>,
-    secured_access_storage: Data<SecuredAccessTokenStorage>,
+    State(secured_access_storage): State<Arc<SecuredAccessTokenStorage>>,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+    data: Json<RegisterRequest>,
+) -> Result<impl IntoResponse, TimeError> {
     if data.password.len() > 128 {
         return Err(TimeError::InvalidLength(
             "Password cannot be longer than 128 characters".to_string(),
@@ -132,11 +133,10 @@ pub async fn get_secured_access_token(
     }
 }
 
-#[post("/auth/regenerate")]
 pub async fn regenerate(
     user: SecuredUserIdentity,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+) -> Result<impl IntoResponse, TimeError> {
     db.regenerate_token(user.identity.id)
         .await
         .inspect_err(|e| error!("{}", e))
@@ -146,13 +146,13 @@ pub async fn regenerate(
         })
 }
 
-#[post("/auth/register")]
 pub async fn register(
-    conn_info: ConnectionInfo,
-    data: Json<RegisterRequest>,
+    State(rls): State<Arc<RegisterLimiter>>,
+    ConnectInfo(conn_info): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     db: DatabaseWrapper,
-    rls: Data<RegisterLimiter>,
-) -> Result<impl Responder, TimeError> {
+    data: Json<RegisterRequest>,
+) -> Result<impl IntoResponse, TimeError> {
     if data.password.len() < 8 || data.password.len() > 128 {
         return Err(TimeError::InvalidLength(
             "Password has to be between 8 and 128 characters long".to_string(),
@@ -168,14 +168,18 @@ pub async fn register(
     }
 
     let ip = if rls.limit_by_peer_ip {
-        conn_info.peer_addr().ok_or(TimeError::UnknownError)?
+        conn_info.ip()
     } else {
-        conn_info
-            .realip_remote_addr()
-            .ok_or(TimeError::UnknownError)?
+        let header = headers
+            .get("x-forwarded-for")
+            .or_else(|| headers.get(FORWARDED));
+
+        header
+            .and_then(|ip| ip.to_str().ok().and_then(|ip| ip.parse::<IpAddr>().ok()))
+            .unwrap_or(conn_info.ip())
     };
 
-    if let Some(res) = rls.storage.get(ip) {
+    if let Some(res) = rls.storage.get(&ip.to_string()) {
         if chrono::Local::now()
             .naive_local()
             .signed_duration_since(*res)
@@ -195,12 +199,11 @@ pub async fn register(
     Ok(Json(res))
 }
 
-#[post("/auth/changeusername")]
 pub async fn changeusername(
     user: SecuredUserIdentity,
-    data: Json<UsernameChangeRequest>,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+    data: Json<UsernameChangeRequest>,
+) -> Result<impl IntoResponse, TimeError> {
     if data.new.len() < 2 || data.new.len() > 32 {
         return Err(TimeError::InvalidLength(
             "Username is not between 2 and 32 chars".to_string(),
@@ -217,15 +220,14 @@ pub async fn changeusername(
 
     let user = db.get_user_by_id(user.identity.id).await?;
     db.change_username(user.id, data.new.clone()).await?;
-    Ok(HttpResponse::Ok().finish())
+    Ok(StatusCode::OK)
 }
 
-#[post("/auth/changepassword")]
 pub async fn changepassword(
     user: UserIdentity,
-    data: Json<PasswordChangeRequest>,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+    data: Json<PasswordChangeRequest>,
+) -> Result<impl IntoResponse, TimeError> {
     if data.new.len() < 8 || data.new.len() > 128 {
         return Err(TimeError::InvalidLength(
             "Password has to be between 8 and 128 characters long".to_string(),
@@ -235,9 +237,8 @@ pub async fn changepassword(
     let tuser = db.get_testaustime_user_by_id(user.id).await?;
     let k = db.verify_user_password(&user.username, &old).await?;
     if k.is_some() || tuser.password.iter().all(|n| *n == 0) {
-        db.change_password(user.id, &data.new)
-            .await
-            .map(|_| HttpResponse::Ok().finish())
+        db.change_password(user.id, &data.new).await?;
+        Ok(StatusCode::OK)
     } else {
         Err(TimeError::Unauthorized)
     }
