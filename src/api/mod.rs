@@ -1,4 +1,7 @@
-use actix_web::{HttpResponse, Responder};
+use std::sync::LazyLock;
+
+use axum::response::IntoResponse;
+use http::StatusCode;
 use regex::Regex;
 
 pub mod account;
@@ -12,11 +15,10 @@ pub mod search;
 pub mod stats;
 pub mod users;
 
-thread_local! {
-    pub static REGEX: Regex = Regex::new("^[[:word:]]{2,32}$").unwrap();
-}
+pub static VALID_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new("^[[:word:]]{2,32}$").unwrap()
+});
 
-#[get("/health")]
-async fn health() -> impl Responder {
-    HttpResponse::Ok()
+pub async fn health() -> impl IntoResponse {
+    StatusCode::OK
 }

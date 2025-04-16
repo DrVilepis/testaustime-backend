@@ -28,7 +28,7 @@ impl super::DatabaseWrapper {
     pub async fn get_user_by_name(&self, target_username: &str) -> Result<UserIdentity, TimeError> {
         let mut conn = self.db.get().await?;
         use crate::schema::user_identities::dsl::*;
-        sql_function!(fn lower(x: diesel::sql_types::Text) -> Text);
+        define_sql_function!(fn lower(x: diesel::sql_types::Text) -> Text);
 
         Ok(user_identities
             .filter(lower(username).eq(target_username.to_lowercase()))
@@ -63,11 +63,12 @@ impl super::DatabaseWrapper {
         password: &str,
     ) -> Result<Option<UserIdentity>, TimeError> {
         let mut conn = self.db.get().await?;
+        define_sql_function!(fn lower(x: diesel::sql_types::Text) -> Text);
 
         use user_identities::dsl::username;
 
         let (user, tuser) = user_identities::table
-            .filter(username.eq(arg_username))
+            .filter(lower(username).eq(arg_username.to_lowercase()))
             .inner_join(testaustime_users::table)
             .first::<(UserIdentity, TestaustimeUser)>(&mut conn)
             .await?;
@@ -104,9 +105,10 @@ impl super::DatabaseWrapper {
         &self,
         username: &str,
         password: &str,
+        email: Option<&str>,
     ) -> Result<NewUserIdentity, TimeError> {
         if self.user_exists(username.to_string()).await? {
-            return Err(TimeError::UserExists);
+            return Err(TimeError::UsernameTaken);
         }
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
@@ -118,6 +120,7 @@ impl super::DatabaseWrapper {
             registration_time: chrono::Local::now().naive_local(),
             username: username.to_string(),
             friend_code: generate_friend_code(),
+            email: email.map(String::from),
         };
 
         let new_user_clone = new_user.clone();
@@ -134,7 +137,7 @@ impl super::DatabaseWrapper {
                         .returning(user_identities::id)
                         .get_results::<i32>(&mut conn)
                         .await
-                        .map_err(|_| TimeError::UserExists)?;
+                        .map_err(|_| TimeError::UsernameTaken)?;
 
                     let testaustime_user = NewTestaustimeUser {
                         password: hash.as_bytes().to_vec(),
@@ -158,32 +161,29 @@ impl super::DatabaseWrapper {
     pub async fn change_username(&self, user: i32, new_username: &str) -> Result<(), TimeError> {
         let mut conn = self.db.get().await?;
 
-        conn.build_transaction()
-            .read_write()
-            .run(|mut conn| {
-                Box::pin(async move {
-                    use crate::schema::user_identities::dsl::*;
-
-                    if (user_identities
-                        .filter(username.eq(new_username))
-                        .first::<UserIdentity>(&mut conn)
-                        .await)
-                        .is_ok()
-                    {
-                        return Err(TimeError::UserExists);
-                    };
-
-                    diesel::update(crate::schema::user_identities::table)
-                        .filter(id.eq(user))
-                        .set(username.eq(new_username))
-                        .execute(&mut conn)
-                        .await
-                        .map_err(|_| TimeError::UserExists)?;
-
-                    Ok::<(), TimeError>(())
-                })
-            })
+        use crate::schema::user_identities::dsl::*;
+        diesel::update(crate::schema::user_identities::table)
+            .filter(id.eq(user))
+            .set(username.eq(new_username))
+            .execute(&mut conn)
             .await
+            .map_err(|_| TimeError::UsernameTaken)?;
+
+        Ok(())
+    }
+
+    pub async fn change_email(&self, user: i32, new_email: String) -> Result<(), TimeError> {
+        let mut conn = self.db.get().await?;
+
+        use crate::schema::user_identities::dsl::*;
+        diesel::update(crate::schema::user_identities::table)
+            .filter(id.eq(user))
+            .set(email.eq(new_email))
+            .execute(&mut conn)
+            .await
+            .map_err(|_| TimeError::EmailTaken)?;
+
+        Ok(())
     }
 
     pub async fn change_password(&self, user: i32, new_password: &str) -> Result<(), TimeError> {
@@ -218,6 +218,24 @@ impl super::DatabaseWrapper {
                 .filter(auth_token.eq(token))
                 .first::<UserIdentity>(&mut conn)
                 .await?
+        };
+
+        Ok(user)
+    }
+
+    pub async fn get_user_by_email(
+        &self,
+        searched_email: &str,
+    ) -> Result<Option<UserIdentity>, TimeError> {
+        let mut conn = self.db.get().await?;
+        let user = {
+            use crate::schema::user_identities::dsl::*;
+
+            user_identities
+                .filter(email.eq(searched_email))
+                .first::<UserIdentity>(&mut conn)
+                .await
+                .optional()?
         };
 
         Ok(user)
@@ -269,13 +287,14 @@ impl super::DatabaseWrapper {
                 registration_time: chrono::Local::now().naive_local(),
                 username,
                 friend_code: generate_friend_code(),
+                email: None,
             };
             let new_user_id = diesel::insert_into(crate::schema::user_identities::table)
                 .values(&new_user)
                 .returning(id)
                 .get_results::<i32>(&mut conn)
                 .await
-                .map_err(|_| TimeError::UserExists)?;
+                .map_err(|_| TimeError::UsernameTaken)?;
 
             let testausid_user = NewTestausIdUser {
                 user_id: user_id_arg,

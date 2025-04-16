@@ -89,7 +89,7 @@ impl super::DatabaseWrapper {
     }
 
     pub async fn get_leaderboard_id_by_name(&self, lname: &str) -> Result<i32, TimeError> {
-        sql_function!(fn lower(x: diesel::sql_types::Text) -> Text);
+        define_sql_function!(fn lower(x: diesel::sql_types::Text) -> Text);
         use crate::schema::leaderboards::dsl::*;
 
         let mut conn = self.db.get().await?;
@@ -102,7 +102,7 @@ impl super::DatabaseWrapper {
     }
 
     pub async fn get_leaderboard(&self, lname: &str) -> Result<PrivateLeaderboard, TimeError> {
-        sql_function!(fn lower(x: diesel::sql_types::Text) -> Text);
+        define_sql_function!(fn lower(x: diesel::sql_types::Text) -> Text);
         let mut conn = self.db.get().await?;
 
         let board = {

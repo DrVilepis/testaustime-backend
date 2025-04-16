@@ -1,4 +1,5 @@
 #![allow(clippy::extra_unused_lifetimes)]
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, Eq, PartialEq, Hash)]
@@ -16,6 +17,7 @@ pub struct UserIdentity {
     pub username: String,
     pub registration_time: chrono::NaiveDateTime,
     pub is_public: bool,
+    pub email: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -47,7 +49,7 @@ pub struct TestaustimeUser {
     pub identity: i32,
 }
 
-use crate::{requests::HeartBeat, schema::testaustime_users};
+use crate::schema::testaustime_users;
 
 #[derive(Insertable, Serialize, Clone)]
 #[diesel(table_name = testaustime_users)]
@@ -114,6 +116,7 @@ pub struct NewUserIdentity {
     pub username: String,
     pub friend_code: String,
     pub registration_time: chrono::NaiveDateTime,
+    pub email: Option<String>,
 }
 
 // NOTE: It is impossible to use diesel::assocations here
@@ -250,4 +253,29 @@ pub struct FriendWithTimeAndStatus {
 #[derive(Serialize, Deserialize, Debug, Default, Clone, Eq, PartialEq, Hash)]
 pub struct SecuredAccessTokenResponse {
     pub token: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Hash, Eq, PartialEq, Clone)]
+pub struct HeartBeat {
+    #[serde(deserialize_with = "project_deserialize")]
+    pub project_name: Option<String>,
+    pub language: Option<String>,
+    pub editor_name: Option<String>,
+    pub hostname: Option<String>,
+    pub hidden: Option<bool>,
+}
+
+// Wtf is this
+fn project_deserialize<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let project = Option::<String>::deserialize(deserializer)?;
+    Ok(project.map(|p| {
+        if p.starts_with("tmp.") {
+            String::from("tmp")
+        } else {
+            p
+        }
+    }))
 }

@@ -1,22 +1,17 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Duration;
 
-use actix_web::test::{self, TestRequest};
 use serde_json::json;
 
 use super::{macros::*, *};
-use crate::{
-    models::{CurrentActivity, NewUserIdentity, SecuredAccessTokenResponse},
-    requests::HeartBeat,
-};
+use crate::models::{CurrentActivity, HeartBeat, NewUserIdentity};
 
-#[actix_web::test]
+#[tokio::test]
 async fn updating_activity_works() {
-    let app = test::init_service(App::new().configure(init_test_services)).await;
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80u16);
+    let mut app = create_test_router().into_service();
 
     let body = json!({"username": "activeuser", "password": "password"});
-    let resp = request!(app, addr, post, "/auth/register", body);
-    let user: NewUserIdentity = test::read_body_json(resp).await;
+    let resp = request!(app, POST, "/auth/register", body);
+    let user: NewUserIdentity = body_to_json(resp).await;
 
     let heartbeat = HeartBeat {
         hostname: Some(String::from("hostname")),
@@ -26,32 +21,19 @@ async fn updating_activity_works() {
         hidden: Some(false),
     };
 
-    let resp = request_auth!(
-        app,
-        addr,
-        post,
-        "/activity/update",
-        user.auth_token,
-        heartbeat
-    );
+    let resp = request_auth!(app, POST, "/activity/update", user.auth_token, heartbeat);
     assert!(
         resp.status().is_success(),
         "Sending heartbeat should succeed"
     );
 
-    let resp = request_auth!(
-        app,
-        addr,
-        get,
-        "/users/@me/activity/current",
-        user.auth_token
-    );
+    let resp = request_auth!(app, GET, "/users/@me/activity/current", user.auth_token);
     assert!(
         resp.status().is_success(),
         "Getting current activity should work"
     );
 
-    let current: CurrentActivity = test::read_body_json(resp).await;
+    let current: CurrentActivity = body_to_json(resp).await;
 
     assert_eq!(
         heartbeat, current.heartbeat,
@@ -59,26 +41,13 @@ async fn updating_activity_works() {
     );
 
     // NOTE: adding duration to the session
-    actix_web::rt::time::sleep(std::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let resp = request_auth!(
-        app,
-        addr,
-        post,
-        "/activity/update",
-        user.auth_token,
-        heartbeat
-    );
+    let resp = request_auth!(app, POST, "/activity/update", user.auth_token, heartbeat);
     assert!(resp.status().is_success(), "Extending session should work");
 
-    let resp = request_auth!(
-        app,
-        addr,
-        get,
-        "/users/@me/activity/current",
-        user.auth_token
-    );
-    let current: CurrentActivity = test::read_body_json(resp).await;
+    let resp = request_auth!(app, GET, "/users/@me/activity/current", user.auth_token);
+    let current: CurrentActivity = body_to_json(resp).await;
     assert!(
         current.duration >= 1,
         "Duration should be at least 1 second"
@@ -93,8 +62,7 @@ async fn updating_activity_works() {
     };
     let resp = request_auth!(
         app,
-        addr,
-        post,
+        POST,
         "/activity/update",
         user.auth_token,
         new_heartbeat
@@ -104,36 +72,29 @@ async fn updating_activity_works() {
         "Sending heartbeat should succeed"
     );
 
-    let resp = request_auth!(
-        app,
-        addr,
-        get,
-        "/users/@me/activity/current",
-        user.auth_token
-    );
-    let current: CurrentActivity = test::read_body_json(resp).await;
+    let resp = request_auth!(app, GET, "/users/@me/activity/current", user.auth_token);
+    let current: CurrentActivity = body_to_json(resp).await;
     assert!(
         current.heartbeat == new_heartbeat,
         "Mismatch should start new session"
     );
 
-    let resp = request_auth!(app, addr, get, "/users/@me/activity/data", user.auth_token);
-    let data: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    let resp = request_auth!(app, GET, "/users/@me/activity/data", user.auth_token);
+    let data: Vec<serde_json::Value> = body_to_json(resp).await;
 
     assert!(!data.is_empty(), "Old session is stored in the database");
 
-    let resp = request!(app, addr, delete, "/users/@me/delete", body);
+    let resp = request!(app, DELETE, "/users/@me/delete", body);
     assert!(resp.status().is_success(), "Failed to delete user");
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn flushing_works() {
-    let app = test::init_service(App::new().configure(init_test_services)).await;
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80u16);
+    let mut app = create_test_router().into_service();
 
     let body = json!({"username": "activeuser2", "password": "password"});
-    let resp = request!(app, addr, post, "/auth/register", body);
-    let user: NewUserIdentity = test::read_body_json(resp).await;
+    let resp = request!(app, POST, "/auth/register", body);
+    let user: NewUserIdentity = body_to_json(resp).await;
 
     let heartbeat = HeartBeat {
         hostname: Some(String::from("hostname")),
@@ -143,33 +104,26 @@ async fn flushing_works() {
         hidden: Some(false),
     };
 
-    let resp = request_auth!(
-        app,
-        addr,
-        post,
-        "/activity/update",
-        user.auth_token,
-        heartbeat
-    );
+    let resp = request_auth!(app, POST, "/activity/update", user.auth_token, heartbeat);
     assert!(
         resp.status().is_success(),
         "Sending heartbeat should succeed"
     );
 
-    let resp = request_auth!(app, addr, get, "/users/@me/activity/data", user.auth_token);
-    let data: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    let resp = request_auth!(app, GET, "/users/@me/activity/data", user.auth_token);
+    let data: Vec<serde_json::Value> = body_to_json(resp).await;
 
     assert!(data.is_empty(), "No session should exist");
 
-    let resp = request_auth!(app, addr, post, "/activity/flush", user.auth_token);
+    let resp = request_auth!(app, POST, "/activity/flush", user.auth_token);
     assert!(resp.status().is_success(), "Flushing should work");
 
-    let resp = request_auth!(app, addr, get, "/users/@me/activity/data", user.auth_token);
-    let data: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    let resp = request_auth!(app, GET, "/users/@me/activity/data", user.auth_token);
+    let data: Vec<serde_json::Value> = body_to_json(resp).await;
 
     assert!(!data.is_empty(), "Session should be saved after a flush");
 
-    let resp = request!(app, addr, delete, "/users/@me/delete", body);
+    let resp = request!(app, DELETE, "/users/@me/delete", body);
     assert!(resp.status().is_success(), "Failed to delete user");
 }
 
