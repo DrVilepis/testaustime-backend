@@ -1,9 +1,9 @@
-use actix_web::{
-    error::*,
-    web::{self, Data},
-    HttpResponse, Responder,
-};
+use std::sync::Arc;
+
+use axum::{extract::State, response::IntoResponse, Json};
 use diesel::result::DatabaseErrorKind;
+use http::StatusCode;
+use serde::Deserialize;
 
 use crate::{
     api::{activity::HeartBeatMemoryStore, auth::SecuredUserIdentity},
@@ -12,15 +12,19 @@ use crate::{
     models::{CurrentActivity, FriendWithTimeAndStatus, UserId},
 };
 
-#[post("/friends/add")]
+#[derive(Deserialize, Debug)]
+pub struct FriendRequest {
+    pub code: String,
+}
+
 pub async fn add_friend(
     user: UserId,
-    body: String,
     db: DatabaseWrapper,
-    heartbeats: Data<HeartBeatMemoryStore>,
-) -> Result<impl Responder, TimeError> {
+    State(heartbeats): State<Arc<HeartBeatMemoryStore>>,
+    Json(body): Json<FriendRequest>,
+) -> Result<impl IntoResponse, TimeError> {
     match db
-        .add_friend(user.id, body.trim().trim_start_matches("ttfc_").to_string())
+        .add_friend(user.id, body.code.trim_start_matches("ttfc_").to_string())
         .await
     {
         // This is not correct
@@ -52,17 +56,16 @@ pub async fn add_friend(
                 }),
             };
 
-            Ok(web::Json(friend_with_time))
+            Ok(Json(friend_with_time))
         }
     }
 }
 
-#[get("/friends/list")]
 pub async fn get_friends(
     user: UserId,
     db: DatabaseWrapper,
-    heartbeats: Data<HeartBeatMemoryStore>,
-) -> Result<impl Responder, TimeError> {
+    State(heartbeats): State<Arc<HeartBeatMemoryStore>>,
+) -> Result<impl IntoResponse, TimeError> {
     let friends = db
         .get_friends_with_time(user.id)
         .await
@@ -86,31 +89,34 @@ pub async fn get_friends(
         })
         .collect::<Vec<_>>();
 
-    Ok(web::Json(friends))
+    Ok(Json(friends))
 }
 
-#[post("/friends/regenerate")]
 pub async fn regenerate_friend_code(
     user: SecuredUserIdentity,
     db: DatabaseWrapper,
-) -> Result<impl Responder, TimeError> {
+) -> Result<impl IntoResponse, TimeError> {
     db.regenerate_friend_code(user.identity.id)
         .await
         .inspect_err(|e| error!("{}", e))
-        .map(|code| web::Json(json!({ "friend_code": code })))
+        .map(|code| Json(json!({ "friend_code": code })))
 }
 
-#[delete("/friends/remove")]
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemoveFriendRequest {
+    name: String,
+}
+
 pub async fn remove(
     user: SecuredUserIdentity,
     db: DatabaseWrapper,
-    body: String,
-) -> Result<impl Responder, TimeError> {
-    let friend = db.get_user_by_name(&body).await?;
+    Json(body): Json<RemoveFriendRequest>,
+) -> Result<impl IntoResponse, TimeError> {
+    let friend = db.get_user_by_name(&body.name).await?;
     let deleted = db.remove_friend(user.identity.id, friend.id).await?;
 
     if deleted {
-        Ok(HttpResponse::Ok().finish())
+        Ok(StatusCode::OK)
     } else {
         Err(TimeError::BadId)
     }

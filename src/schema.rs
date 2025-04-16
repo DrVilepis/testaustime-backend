@@ -75,6 +75,7 @@ diesel::table! {
         username -> Varchar,
         registration_time -> Timestamp,
         is_public -> Bool,
+        email -> Nullable<Varchar>,
     }
 }
 
