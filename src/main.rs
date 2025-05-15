@@ -142,19 +142,19 @@ fn create_router(config: &TestaustimeConfig) -> Router {
                 })
                 .route("/auth/login", post(api::auth::login))
                 .route("/auth/regenerate", post(api::auth::regenerate))
-                .route("/auth/change_username", post(api::auth::change_username))
-                .route("/auth/change_email", post(api::auth::change_email))
-                .route("/auth/change_password", post(api::auth::change_password))
+                .route("/auth/change-username", post(api::auth::change_username))
+                .route("/auth/change-email", post(api::auth::change_email))
+                .route("/auth/change-password", post(api::auth::change_password))
                 .route(
                     "/auth/securedaccess",
                     post(api::auth::get_secured_access_token),
                 )
                 .route(
-                    "/auth/reset_password",
+                    "/auth/reset-password",
                     post(api::auth::request_password_reset),
                 )
                 .route(
-                    "/auth/complete_password_reset",
+                    "/auth/complete-password-reset",
                     post(api::auth::reset_password),
                 )
                 .route("/friends/add", post(api::friends::add_friend))
