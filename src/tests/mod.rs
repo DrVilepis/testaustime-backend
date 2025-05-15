@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 // TODO add tests for oauth and improve test coverage
 use http_body_util::BodyExt;
@@ -19,6 +19,8 @@ use tower::ServiceExt;
 // some of the routes and there cannot exists transactions within transactions :'(
 use crate::create_router;
 
+const TEST_ADDR: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 3000));
+
 async fn body_to_json<T: DeserializeOwned>(response: Response<Body>) -> T {
     let body = response.into_body().collect().await.unwrap().to_bytes();
 
@@ -30,7 +32,8 @@ fn create_test_router() -> Router {
         bypass_token: "0000".to_string(),
         ratelimit_by_peer_ip: true,
         max_requests_per_min: 30,
-        address: "localhost:8080".to_string(),
+        max_registers_per_hour: 5,
+        address: "localhost:3000".to_string(),
         database_url: std::env::var("TEST_DATABASE").expect("TEST_DATABASE not defined"),
         allowed_origin: "".to_string(),
         mail_server: "".to_string(),

@@ -36,7 +36,6 @@ async fn login_change_username_and_password() {
     let body = json!({"username": "testuser2", "password": "password"});
 
     let resp = request!(app, POST, "/auth/register", body);
-    println!("{:?}", resp);
     assert!(resp.status().is_success(), "Failed to create user");
     let user: NewUserIdentity = body_to_json(resp).await;
 
@@ -64,7 +63,7 @@ async fn login_change_username_and_password() {
     let resp = request_auth!(
         app,
         POST,
-        "/auth/changeusername",
+        "/auth/change_username",
         user.auth_token,
         change_request
     );
@@ -73,7 +72,7 @@ async fn login_change_username_and_password() {
         "Auth token is not secured access token"
     );
 
-    let resp = request_auth!(app, POST, "/auth/changeusername", sat.token, change_request);
+    let resp = request_auth!(app, POST, "/auth/change_username", sat.token, change_request);
     assert!(resp.status().is_success(), "Username change failed");
 
     let resp = request_auth!(app, GET, "/users/@me", user.auth_token);
@@ -91,7 +90,7 @@ async fn login_change_username_and_password() {
     let resp = request_auth!(
         app,
         POST,
-        "/auth/changepassword",
+        "/auth/change_password",
         user.auth_token,
         pw_request
     );

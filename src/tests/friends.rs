@@ -19,16 +19,17 @@ async fn adding_friends_works() {
     let f2: NewUserIdentity = body_to_json(resp).await;
 
     let friend_body = json!({"code": f2.friend_code.clone()});
-    let resp = request!(app, POST, "/friends/add", friend_body);
+    let resp = request_auth!(app, POST, "/friends/add", f1.auth_token, friend_body);
+    println!("{:?}", resp);
 
     assert!(resp.status().is_success(), "Adding friend works");
 
-    let resp = request!(app, POST, "/friends/add", friend_body);
+    let resp = request_auth!(app, POST, "/friends/add", f1.auth_token, friend_body);
 
     assert!(resp.status().is_client_error(), "Re-adding friend fails");
 
     let self_body = json!({"code": f1.friend_code.clone()});
-    let resp = request!(app, POST, "/friends/add", self_body);
+    let resp = request_auth!(app, POST, "/friends/add", f1.auth_token, self_body);
 
     assert!(resp.status().is_client_error(), "Adding self fails");
 
