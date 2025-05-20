@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 
-use crate::utils::generate_token;
+use crate::utils::generate_auth_token;
 
 #[derive(Clone, Copy, Debug)]
 pub enum SecuredAccessError {
@@ -44,7 +44,7 @@ impl SecuredAccessTokenStorage {
     }
 
     pub fn create_token(&self, user_id: i32) -> String {
-        let token = generate_token();
+        let token = generate_auth_token();
 
         self.inner.insert(
             token.clone(),

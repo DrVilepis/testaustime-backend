@@ -56,15 +56,17 @@ pub enum TimeError {
     #[error("The user has no active session")]
     NotActive,
     #[error("Cannot connect to mail server")]
-    Error(#[from] lettre::transport::smtp::Error),
+    SmtpError(#[from] lettre::transport::smtp::Error),
     #[error("Invalid password reset token")]
     InvalidPasswordResetToken,
     #[error("Invalid email")]
     InvalidEmail,
     #[error("Expired password reset token")]
     ExpiredPasswordResetToken,
-    #[error("Account with this email exist")]
+    #[error("Account with this email exists")]
     EmailTaken,
+    #[error("Password hashing failed")]
+    HashError(#[from] argon2::password_hash::Error),
 }
 
 impl IntoResponse for TimeError {
@@ -77,7 +79,9 @@ impl IntoResponse for TimeError {
             TimeError::BadUsername
             | TimeError::InvalidLength(_)
             | TimeError::BadId
-            | TimeError::BadLeaderboardName => StatusCode::BAD_REQUEST,
+            | TimeError::BadLeaderboardName
+            | TimeError::InvalidEmail
+            | TimeError::BadCode => StatusCode::BAD_REQUEST,
             TimeError::CurrentUser | TimeError::NotMember | TimeError::LastAdmin => {
                 StatusCode::FORBIDDEN
             }
@@ -92,7 +96,13 @@ impl IntoResponse for TimeError {
             | TimeError::InvalidPasswordResetToken
             | TimeError::ExpiredPasswordResetToken => StatusCode::UNAUTHORIZED,
             TimeError::TooManyRegisters => StatusCode::TOO_MANY_REQUESTS,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+            TimeError::DieselError(_)
+            | TimeError::DieselConnectionError(_)
+            | TimeError::DeadpoolError(_)
+            | Self::AxumError(_)
+            | TimeError::UnknownError
+            | TimeError::SmtpError(_)
+            | TimeError::HashError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
         let body = Json(json!({"error": self.to_string()}));
@@ -103,6 +113,12 @@ impl IntoResponse for TimeError {
 
 impl TimeError {
     pub fn is_unique_violation(&self) -> bool {
-        matches!(self, TimeError::DieselError(diesel::result::Error::DatabaseError(diesel::result::DatabaseErrorKind::UniqueViolation,.. )))
+        matches!(
+            self,
+            TimeError::DieselError(diesel::result::Error::DatabaseError(
+                diesel::result::DatabaseErrorKind::UniqueViolation,
+                ..
+            ))
+        )
     }
 }

@@ -22,7 +22,7 @@ impl super::DatabaseWrapper {
         creator_id: i32,
         name: &str,
     ) -> Result<String, TimeError> {
-        let code = crate::utils::generate_token();
+        let code = crate::utils::generate_auth_token();
 
         let board = NewLeaderboard {
             name: name.to_string(),
@@ -64,7 +64,7 @@ impl super::DatabaseWrapper {
     }
 
     pub async fn regenerate_leaderboard_invite(&self, lid: i32) -> Result<String, TimeError> {
-        let newinvite = crate::utils::generate_token();
+        let newinvite = crate::utils::generate_auth_token();
 
         let mut conn = self.db.get().await?;
 

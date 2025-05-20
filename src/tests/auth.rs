@@ -72,7 +72,13 @@ async fn login_change_username_and_password() {
         "Auth token is not secured access token"
     );
 
-    let resp = request_auth!(app, POST, "/auth/change-username", sat.token, change_request);
+    let resp = request_auth!(
+        app,
+        POST,
+        "/auth/change-username",
+        sat.token,
+        change_request
+    );
     assert!(resp.status().is_success(), "Username change failed");
 
     let resp = request_auth!(app, GET, "/users/@me", user.auth_token);

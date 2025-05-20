@@ -6,7 +6,7 @@ use rand::{distr::Alphanumeric, rng, Rng};
 
 use crate::models::CodingActivity;
 
-pub fn generate_token() -> String {
+pub fn generate_auth_token() -> String {
     rng()
         .sample_iter(&Alphanumeric)
         .take(32)

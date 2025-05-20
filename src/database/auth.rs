@@ -56,7 +56,6 @@ impl super::DatabaseWrapper {
             .await?)
     }
 
-    // TODO: get rid of unwraps
     pub async fn verify_user_password(
         &self,
         arg_username: &str,
@@ -74,12 +73,14 @@ impl super::DatabaseWrapper {
             .await?;
 
         let argon2 = Argon2::default();
-        let Ok(salt) = SaltString::new(std::str::from_utf8(&tuser.salt).expect("bug: impossible"))
-        else {
-            return Ok(None); // The user has no password
-        };
-        let password_hash = argon2.hash_password(password.as_bytes(), &salt).unwrap();
-        if password_hash.hash.expect("bug: impossible").as_bytes() == tuser.password {
+        let salt = SaltString::new(std::str::from_utf8(&tuser.salt).expect("Infallible"))?;
+
+        let password_hash = argon2.hash_password(password.as_bytes(), &salt)?;
+
+        if password_hash
+            .hash
+            .is_some_and(|p| p.as_bytes() == tuser.password)
+        {
             Ok(Some(user))
         } else {
             Ok(None)
@@ -89,7 +90,7 @@ impl super::DatabaseWrapper {
     pub async fn regenerate_token(&self, userid: i32) -> Result<String, TimeError> {
         let mut conn = self.db.get().await?;
 
-        let token = crate::utils::generate_token();
+        let token = crate::utils::generate_auth_token();
 
         use crate::schema::user_identities::dsl::*;
 
@@ -113,7 +114,7 @@ impl super::DatabaseWrapper {
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
         let password_hash = argon2.hash_password(password.as_bytes(), &salt).unwrap();
-        let token = generate_token();
+        let token = generate_auth_token();
         let hash = password_hash.hash.unwrap();
         let new_user = NewUserIdentity {
             auth_token: token,
@@ -283,7 +284,7 @@ impl super::DatabaseWrapper {
             Ok(token)
         } else {
             let new_user = NewUserIdentity {
-                auth_token: generate_token(),
+                auth_token: generate_auth_token(),
                 registration_time: chrono::Local::now().naive_local(),
                 username,
                 friend_code: generate_friend_code(),

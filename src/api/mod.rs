@@ -15,9 +15,8 @@ pub mod search;
 pub mod stats;
 pub mod users;
 
-pub static VALID_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new("^[[:word:]]{2,32}$").unwrap()
-});
+pub static VALID_NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("^[[:word:]]{2,32}$").unwrap());
 
 pub async fn health() -> impl IntoResponse {
     StatusCode::OK
