@@ -1,15 +1,12 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use axum::{
-    extract::{ConnectInfo, FromRequestParts, State},
+    extract::{FromRequestParts, State},
     response::IntoResponse,
     Json,
 };
 use chrono::{Duration, Local};
-use http::{header::FORWARDED, request::Parts, HeaderMap, StatusCode};
+use http::{request::Parts, StatusCode};
 use lettre::{
     message::header::ContentType, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
@@ -21,7 +18,7 @@ use crate::{
     error::TimeError,
     models::{SecuredAccessTokenResponse, SelfUser, UserId, UserIdentity},
     utils::{generate_password_reset_token, validate_email},
-    PasswordReset, PasswordResetState, RegisterLimiter,
+    PasswordReset, PasswordResetState,
 };
 
 #[derive(Deserialize)]
@@ -177,9 +174,6 @@ pub async fn regenerate(
 }
 
 pub async fn register(
-    State(rls): State<Arc<RegisterLimiter>>,
-    ConnectInfo(conn_info): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
     db: DatabaseWrapper,
     Json(data): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, TimeError> {
@@ -201,34 +195,9 @@ pub async fn register(
         return Err(TimeError::UsernameTaken);
     }
 
-    let ip = if rls.limit_by_peer_ip {
-        conn_info.ip()
-    } else {
-        let header = headers
-            .get("x-forwarded-for")
-            .or_else(|| headers.get(FORWARDED));
-
-        header
-            .and_then(|ip| ip.to_str().ok().and_then(|ip| ip.parse::<IpAddr>().ok()))
-            .unwrap_or(conn_info.ip())
-    };
-
-    if let Some(res) = rls.storage.get(&ip.to_string()) {
-        if chrono::Local::now()
-            .naive_local()
-            .signed_duration_since(*res)
-            < chrono::Duration::days(1)
-        {
-            return Err(TimeError::TooManyRegisters);
-        }
-    }
-
     let res = db
         .new_testaustime_user(&data.username, &data.password, data.email.as_deref())
         .await?;
-
-    rls.storage
-        .insert(ip.to_string(), chrono::Local::now().naive_local());
 
     Ok(Json(res))
 }

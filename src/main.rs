@@ -45,7 +45,8 @@ extern crate serde_json;
 pub struct TestaustimeConfig {
     pub bypass_token: String,
     pub ratelimit_by_peer_ip: bool,
-    pub max_requests_per_min: usize,
+    pub max_requests_per_min: u32,
+    pub max_registers_per_hour: u32,
     pub address: String,
     pub database_url: String,
     pub allowed_origin: String,
@@ -122,14 +123,29 @@ fn create_router(config: &TestaustimeConfig) -> Router {
 
     let ratelimiter = Arc::new(
         RateLimiter::keyed(Quota::per_minute(
-            NonZeroU32::new(config.max_requests_per_min as u32).unwrap(),
+            NonZeroU32::new(config.max_requests_per_min).unwrap(),
+        ))
+        .with_middleware(),
+    );
+
+    let register_ratelimiter = Arc::new(
+        RateLimiter::keyed(Quota::per_hour(
+            NonZeroU32::new(config.max_registers_per_hour).unwrap(),
         ))
         .with_middleware(),
     );
 
     Router::new()
         .route("/health", get(api::health))
-        .route("/auth/register", post(api::auth::register))
+        .merge(
+            Router::new()
+                .route("/auth/register", post(api::auth::register))
+                .layer(TestaustimeRateLimiter {
+                    limiter: register_ratelimiter,
+                    use_peer_addr: config.ratelimit_by_peer_ip,
+                    bypass_token: config.bypass_token.clone(),
+                }),
+        )
         .merge({
             let router = Router::new()
                 .nest("/activity", {
