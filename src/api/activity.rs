@@ -4,7 +4,7 @@ use axum::{extract::State, response::IntoResponse, Json};
 use chrono::{Duration, Local};
 use dashmap::DashMap;
 use http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     api::auth::SecuredUserIdentity,
@@ -25,6 +25,11 @@ pub struct ActivityRenameRequest {
 pub struct HideRequest {
     target_project: String,
     hidden: bool,
+}
+
+#[derive(Serialize)]
+pub struct UpdateResponse {
+    duration: i64,
 }
 pub async fn update(
     user: UserId,
@@ -77,14 +82,18 @@ pub async fn update(
                         user.id,
                         (heartbeat, Local::now().naive_local(), Duration::seconds(0)),
                     );
-                    Ok(0i32.to_string())
+                    Ok(Json(UpdateResponse {
+                        duration: 0,
+                    }))
                 } else {
                     // Extend current coding session if heartbeat matches and it has been under the maximum duration of a break
                     heartbeats.insert(
                         user.id,
                         (heartbeat, start, curtime.signed_duration_since(start)),
                     );
-                    Ok(curtime.signed_duration_since(start).to_string())
+                    Ok(Json(UpdateResponse {
+                        duration: curtime.signed_duration_since(start).num_seconds()
+                    }))
                 }
             } else {
                 // Flush current session and start new session if heartbeat changes
@@ -100,7 +109,9 @@ pub async fn update(
                     (heartbeat, Local::now().naive_local(), Duration::seconds(0)),
                 );
 
-                Ok(0i32.to_string())
+                Ok(Json(UpdateResponse {
+                    duration: 0
+                }))
             }
         }
         None => {
@@ -109,7 +120,9 @@ pub async fn update(
                 user.id,
                 (heartbeat, Local::now().naive_local(), Duration::seconds(0)),
             );
-            Ok(0.to_string())
+            Ok(Json(UpdateResponse {
+                duration: 0,
+            }))
         }
     }
 }
@@ -129,15 +142,20 @@ pub async fn flush(
     Ok(StatusCode::OK)
 }
 
+#[derive(Deserialize)]
+pub struct ActivityDeleteRequest {
+    id: i32,
+}
+
 pub async fn delete(
     user: SecuredUserIdentity,
     db: DatabaseWrapper,
-    body: String,
+    Json(body): Json<ActivityDeleteRequest>,
 ) -> Result<impl IntoResponse, TimeError> {
     let deleted = db
         .delete_activity(
             user.identity.id,
-            body.parse::<i32>().map_err(|_| TimeError::BadId)?,
+            body.id,
         )
         .await?;
     if deleted {
